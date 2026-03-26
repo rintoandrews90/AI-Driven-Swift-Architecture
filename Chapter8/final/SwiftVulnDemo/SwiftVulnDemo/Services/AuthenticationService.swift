@@ -30,7 +30,7 @@ struct AuthToken: Codable {
 /// public key, obtained via:
 ///   openssl s_client -connect api.example.com:443 | openssl x509 -pubkey -noout |
 ///   openssl pkey -pubin -outform DER | openssl dgst -sha256 -binary | base64
-class SecurePinnedURLSessionDelegate: NSObject, URLSessionDelegate {
+final class SecurePinnedURLSessionDelegate: NSObject, URLSessionDelegate {
 
     // Pinned public key hashes (SHA-256, base64-encoded DER representation).
     // Populate this set before production deployment using:
@@ -90,7 +90,10 @@ private extension Data {
 
 // MARK: - AuthenticationService
 
-class AuthenticationService {
+// Swift 6 / actor: `failedAttempts` is mutable shared state that must be
+// actor-isolated.  Stateless helpers (Keychain I/O, hashing, biometrics) are
+// marked `nonisolated` so callers can invoke them without `await`.
+actor AuthenticationService {
 
     // CWE-321 fix: Hardcoded jwtSecret and encryptionKey removed entirely.
     // These values must be retrieved at runtime from a secure server-side
@@ -107,23 +110,23 @@ class AuthenticationService {
 
     // MARK: - Lockout Keychain persistence (BLOCKING #1 fix)
 
-    private func lockoutKey(for username: String) -> String {
+    nonisolated private func lockoutKey(for username: String) -> String {
         return "lockout.\(username)"
     }
 
-    private func persistLockout(username: String, until date: Date) {
+    nonisolated private func persistLockout(username: String, until date: Date) {
         let timestamp = String(date.timeIntervalSince1970)
         try? saveToKeychain(value: timestamp, key: lockoutKey(for: username))
     }
 
-    private func loadPersistedLockout(username: String) -> Date? {
+    nonisolated private func loadPersistedLockout(username: String) -> Date? {
         guard let value = loadFromKeychain(key: lockoutKey(for: username)),
               let interval = TimeInterval(value) else { return nil }
         let date = Date(timeIntervalSince1970: interval)
         return date > Date() ? date : nil  // nil if already expired
     }
 
-    private func clearPersistedLockout(username: String) {
+    nonisolated private func clearPersistedLockout(username: String) {
         // Delete from Keychain
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -165,7 +168,7 @@ class AuthenticationService {
 
     // MARK: - Keychain helpers (CWE-312)
 
-    private func saveToKeychain(value: String, key: String) throws {
+    nonisolated private func saveToKeychain(value: String, key: String) throws {
         guard let data = value.data(using: .utf8) else { throw KeychainError.encodingFailed }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -179,7 +182,7 @@ class AuthenticationService {
         guard status == errSecSuccess else { throw KeychainError.saveFailed(status) }
     }
 
-    private func loadFromKeychain(key: String) -> String? {
+    nonisolated private func loadFromKeychain(key: String) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: "com.example.SwiftVulnDemo",
@@ -196,7 +199,7 @@ class AuthenticationService {
     // MARK: - Credential storage (CWE-312 fix)
 
     /// Stores username in Keychain (never in UserDefaults).
-    func saveCredentials(username: String) {
+    nonisolated func saveCredentials(username: String) {
         // CWE-312 fix: Credentials stored in Keychain, not UserDefaults.
         // Passwords are never persisted on device; only the username is saved
         // to pre-populate the username field on next launch.
@@ -204,14 +207,14 @@ class AuthenticationService {
         // CWE-532 fix: No print statement logging credentials.
     }
 
-    func loadUsername() -> String? {
+    nonisolated func loadUsername() -> String? {
         return loadFromKeychain(key: "saved_username")
     }
 
     // MARK: - Password hashing (CWE-327 fix)
 
     /// Hashes a password using SHA-256 (replaces insecure MD5).
-    func hashPassword(_ password: String) -> String {
+    nonisolated func hashPassword(_ password: String) -> String {
         // NOTE: This SHA-256 hash is sent to the server as a pre-hash only.
         // The server MUST apply a slow KDF (bcrypt cost ≥ 12, Argon2id, or scrypt)
         // before storing. SHA-256 alone is fast and GPU-crackable if the hash
@@ -223,7 +226,7 @@ class AuthenticationService {
 
     // MARK: - Login (CWE-307, CWE-295, CWE-319, CWE-598, CWE-476, CWE-613 fixes)
 
-    func login(username: String, password: String, completion: @escaping (Bool, AuthToken?) -> Void) {
+    func login(username: String, password: String, completion: @escaping @Sendable (Bool, AuthToken?) -> Void) {
 
         // CWE-307 fix: Check for lockout before proceeding.
         guard !isLockedOut(username: username) else {
@@ -250,11 +253,15 @@ class AuthenticationService {
         // CWE-295 fix: Use SecurePinnedURLSessionDelegate to validate the server's
         // certificate against a pinned public key hash, preventing MITM attacks.
         let session = URLSession(configuration: .default, delegate: SecurePinnedURLSessionDelegate(), delegateQueue: nil)
+        // The data-task callback runs on a URLSession background thread — outside
+        // actor isolation.  Actor-isolated methods (recordFailedAttempt, resetAttempts)
+        // must be dispatched with `Task { await }`.  nonisolated helpers (saveToKeychain)
+        // can be called directly.
         session.dataTask(with: request) { [weak self] data, response, error in
             guard let self = self else { return }
 
             guard let data = data else {
-                self.recordFailedAttempt(username: username)
+                Task { await self.recordFailedAttempt(username: username) }
                 completion(false, nil)
                 return
             }
@@ -264,7 +271,7 @@ class AuthenticationService {
                 let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                 let tokenValue = json["token"] as? String
             else {
-                self.recordFailedAttempt(username: username)
+                Task { await self.recordFailedAttempt(username: username) }
                 completion(false, nil)
                 return
             }
@@ -276,9 +283,10 @@ class AuthenticationService {
             )
 
             // CWE-312 fix: Token stored in Keychain, not UserDefaults.
+            // nonisolated — can be called directly from the background callback.
             try? self.saveToKeychain(value: tokenValue, key: "auth_token")
 
-            self.resetAttempts(username: username)
+            Task { await self.resetAttempts(username: username) }
 
             Task {
                 await AppSession.shared.setToken(tokenValue)
@@ -292,13 +300,13 @@ class AuthenticationService {
     // MARK: - Token validation (CWE-613 fix)
 
     /// Returns true only when the token exists in Keychain and has not expired.
-    func isTokenValid(_ authToken: AuthToken) -> Bool {
+    nonisolated func isTokenValid(_ authToken: AuthToken) -> Bool {
         return authToken.isValid
     }
 
     // MARK: - Biometric authentication (CWE-287 fix)
 
-    func authenticateWithBiometric(completion: @escaping (Bool) -> Void) {
+    nonisolated func authenticateWithBiometric(completion: @escaping (Bool) -> Void) {
         // CWE-287 fix: Hardcoded fallback PIN removed. Biometric authentication
         // must be implemented using LocalAuthentication framework with no
         // hardcoded fallback. If biometrics are unavailable, the user should

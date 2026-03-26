@@ -68,17 +68,22 @@ struct LoginView: View {
     }
 
     private func login() {
-        AuthenticationService.shared.login(username: username, password: password) { success, token in
-            DispatchQueue.main.async {
-                if success {
-                    // CWE-312 fix: saveCredentials no longer persists the password.
-                    // Only the username is saved (to Keychain) for UX convenience.
-                    AuthenticationService.shared.saveCredentials(username: username)
-                    isLoggedIn = true
-                } else {
-                    // CWE-209 fix: Generic error message that does not reveal
-                    // whether the username or password was incorrect.
-                    errorMessage = "Invalid credentials. Please try again."
+        // AuthenticationService is an actor (Swift 6); call with Task + await.
+        // The completion fires on a URLSession background thread, so hop back
+        // to @MainActor before touching @State properties.
+        Task {
+            await AuthenticationService.shared.login(username: username, password: password) { success, _ in
+                Task { @MainActor in
+                    if success {
+                        // CWE-312 fix: saveCredentials no longer persists the password.
+                        // Only the username is saved (to Keychain) for UX convenience.
+                        AuthenticationService.shared.saveCredentials(username: username)
+                        isLoggedIn = true
+                    } else {
+                        // CWE-209 fix: Generic error message that does not reveal
+                        // whether the username or password was incorrect.
+                        errorMessage = "Invalid credentials. Please try again."
+                    }
                 }
             }
         }

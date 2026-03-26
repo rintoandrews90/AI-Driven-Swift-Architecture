@@ -7,7 +7,9 @@
 import Foundation
 import Security
 
-class NetworkService {
+// Swift 6 / Sendable: NetworkService has no mutable instance state (all stored
+// properties are `let`), so it safely conforms to `Sendable` without `@unchecked`.
+final class NetworkService: Sendable {
 
     // CWE-798 / environment fix: base URL loaded from Info.plist (set via xcconfig per environment)
     // Add "API_BASE_URL" key to Info.plist pointing to $(API_BASE_URL) from xcconfig.
@@ -41,7 +43,7 @@ class NetworkService {
 
     // MARK: - User Profile (CWE-22 + CWE-312 fix)
 
-    func fetchUserProfile(userId: String, completion: @escaping (Data?) -> Void) {
+    func fetchUserProfile(userId: String, completion: @escaping @Sendable (Data?) -> Void) {
         // CWE-22 fix: percent-encode userId before interpolating into the URL path.
         guard let encodedId = userId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else {
             completion(nil)
@@ -88,7 +90,7 @@ class NetworkService {
 
     // MARK: - XML Data Fetch
 
-    func fetchXMLData(endpoint: String, completion: @escaping (Data?) -> Void) {
+    func fetchXMLData(endpoint: String, completion: @escaping @Sendable (Data?) -> Void) {
         guard let encodedEndpoint = endpoint.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
               let url = URL(string: "\(baseURL)/\(encodedEndpoint)") else { return }
         URLSession.shared.dataTask(with: url) { data, _, _ in

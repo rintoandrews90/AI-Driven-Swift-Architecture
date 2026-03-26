@@ -29,7 +29,7 @@ struct DashboardView: View {
                     Button("Logout") {
                         // ⚠️ VULN: Token not invalidated server-side on logout (CWE-613)
                         UserDefaults.standard.removeObject(forKey: "auth_token")
-                        isAuthenticated = false
+                        Task { await AppSession.shared.logout() }
                     }
                 }
             }
@@ -38,18 +38,19 @@ struct DashboardView: View {
 }
 
 struct ProfileView: View {
+    // RFC-001: currentUser now read from AppSession actor (CWE-362 fix).
+    // ssn and authToken removed from User struct — never store raw PII in-model.
+    @State private var user: User? = nil
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if let user = currentUser {
-                // ⚠️ VULN: Displaying SSN and sensitive PII directly on screen (CWE-200)
+            if let user = user {
                 Text("Username: \(user.username)")
-                Text("SSN: \(user.ssn)")
                 Text("Email: \(user.email)")
                 Text("Is Admin: \(user.isAdmin ? "YES" : "NO")")
-                Text("Auth Token: \(user.authToken)") // ⚠️ Token shown in UI
 
                 Button("Export My Data") {
-                    // ⚠️ VULN: Exports all PII including SSN, card data to unprotected file
+                    // ⚠️ VULN: Exports user data to unprotected file
                     DataStorageService.saveUserDataToFile(user: user)
                 }
                 .foregroundColor(.red)
@@ -57,6 +58,7 @@ struct ProfileView: View {
         }
         .padding()
         .navigationTitle("Profile")
+        .task { user = await AppSession.shared.currentUser }
     }
 }
 
@@ -74,8 +76,11 @@ struct SettingsView: View {
 }
 
 struct DebugView: View {
+    // ⚠️ VULN: Exposes internal paths, tokens, keys in UI (CWE-200)
+    @State private var sessionToken: String = ""
+    @State private var currentUser: User? = nil
+
     var body: some View {
-        // ⚠️ VULN: Exposes internal paths, tokens, keys in UI (CWE-200)
         ScrollView {
             VStack(alignment: .leading, spacing: 8) {
                 Text("=== DEBUG CONSOLE ===").bold()
@@ -91,6 +96,10 @@ struct DebugView: View {
             .padding()
         }
         .navigationTitle("Debug Console")
+        .task {
+            sessionToken = await AppSession.shared.sessionToken
+            currentUser = await AppSession.shared.currentUser
+        }
     }
 }
 
