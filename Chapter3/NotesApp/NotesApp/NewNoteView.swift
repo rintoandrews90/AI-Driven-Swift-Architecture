@@ -24,6 +24,8 @@ struct NewNoteView: View {
                         .toolbarTitleDisplayMode(.inlineLarge)
                         .toolbar {
                             ToolbarItemGroup(placement: .bottomBar) {
+                                // WCAG 4.1.2: SF Symbol names are not read as meaningful labels by VoiceOver;
+                                // explicit accessibilityLabel provides the required accessible name.
                                 Button {
 
                                     content.transformAttributes(in: &selection) { container in
@@ -38,6 +40,7 @@ struct NewNoteView: View {
                                 } label: {
                                     Image(systemName: "bold")
                                 }
+                                .accessibilityLabel("Bold")
 
                                 Button {
 
@@ -53,6 +56,7 @@ struct NewNoteView: View {
                                 } label: {
                                     Image(systemName: "italic")
                                 }
+                                .accessibilityLabel("Italic")
 
                                 Button {
 
@@ -69,6 +73,7 @@ struct NewNoteView: View {
                                 } label: {
                                     Image(systemName: "underline")
                                 }
+                                .accessibilityLabel("Underline")
 
                                 Button {
 
@@ -85,6 +90,7 @@ struct NewNoteView: View {
                                 } label: {
                                     Image(systemName: "strikethrough")
                                 }
+                                .accessibilityLabel("Strikethrough")
                             }
                         }
                         .accessibilityLabel("Note content")
@@ -118,6 +124,9 @@ struct NewNoteView: View {
                         dismiss()
                     }
                     .disabled(title.isEmpty)
+                    // WCAG 4.1.2: Explicit label so VoiceOver announces the action clearly,
+                    // not just the button text "Save"
+                    .accessibilityLabel("Save note")
                     .accessibilityHint(title.isEmpty ? "Enter a title to enable saving" : "Save the note and close")
                     .accessibilityIdentifier("save-button")
                 }
