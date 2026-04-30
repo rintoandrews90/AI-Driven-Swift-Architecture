@@ -37,13 +37,22 @@ struct ContentView: View {
 
                     Spacer()
 
-                    // Status indicator with proper accessibility
-                    Circle()
-                        .fill(notes.isEmpty ? Color.green : Color.red)
-                        .frame(width: 12, height: 12)
-                        .accessibilityLabel("Status indicator")
-                        .accessibilityValue(notes.isEmpty ? "No notes" : "Active notes")
-                        .accessibilityHint("Shows whether the note list contains active items")
+                    // WCAG 1.4.1: Color is not the only visual means — pair circle with text label
+                    // WCAG 1.4.1 (semantic): Green = notes present (active), gray = empty
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(notes.isEmpty ? Color.gray : Color.green)
+                            .frame(width: 10, height: 10)
+                            .accessibilityHidden(true)
+                        Text(notes.isEmpty ? "Empty" : "\(notes.count) active")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .accessibilityHidden(true)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("Notes status")
+                    .accessibilityValue(notes.isEmpty ? "No notes" : "\(notes.count) active notes")
+                    .accessibilityHint("Shows whether the note list contains active items")
                 }
                 .padding()
                 .background(Color(.systemGray6))
@@ -60,13 +69,14 @@ struct ContentView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    // Add button with proper accessibility
+                    // WCAG 2.5.5: Frame must be on Button, not only on Image, for 44×44pt touch target
                     Button(action: { showingNewNote = true }) {
                         Image(systemName: "plus")
                             .font(.headline)
                             .foregroundColor(.blue)
                     }
-                    .frame(width: 44, height: 44)  // Minimum 44x44 touch target
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
                     .accessibilityLabel("Add new note")
                     .accessibilityHint("Double tap to create a new note")
                     .accessibilityIdentifier("add-note-button")
